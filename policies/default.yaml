@@ -1,0 +1,48 @@
+# PromptShield default policy. Rules are evaluated in order per
+# (match, detector) pair -- see app/policy.py for the exact semantics.
+#
+# min_confidence is a probability-flavored score (0-1), not a calibrated
+# statistical probability -- it comes from a rule-based detector, not a
+# trained classifier. Tune these thresholds against your own traffic; the
+# defaults below are deliberately conservative (biased toward blocking
+# obvious attacks, redacting likely PII, flagging rather than blocking on
+# the noisier signals) rather than tuned to any specific benchmark.
+
+rules:
+  # --- inbound (the user's prompt, before it reaches the LLM) ---
+  - id: block-direct-injection
+    match: inbound
+    detector: injection
+    min_confidence: 0.5
+    action: block
+
+  - id: block-obfuscated-injection
+    match: inbound
+    detector: obfuscation
+    min_confidence: 0.5
+    action: block
+
+  - id: redact-inbound-pii
+    match: inbound
+    detector: pii
+    min_confidence: 0.4
+    action: redact
+
+  # --- outbound (the model's completion, before it reaches the caller) ---
+  - id: block-secret-leak
+    match: outbound
+    detector: secrets
+    min_confidence: 0.5
+    action: block
+
+  - id: flag-system-prompt-leak
+    match: outbound
+    detector: system_prompt_leak
+    min_confidence: 0.5
+    action: flag
+
+  - id: redact-outbound-pii
+    match: outbound
+    detector: pii
+    min_confidence: 0.4
+    action: redact
