@@ -1,0 +1,45 @@
+// PromptShield -> Sentinel bridge.
+//
+// Ship app/audit_log.py's JSONL output to a custom Log Analytics table
+// (e.g. PromptShieldLogs_CL) via a Data Collection Rule / Logs Ingestion
+// API, or point the Azure Monitor Agent at the file path set in
+// PROMPTSHIELD_AUDIT_LOG_PATH. Field names in audit_log.py's AuditEvent
+// dataclass map directly to columns here -- deliberately kept consistent
+// with this author's Meridian project's MeridianLogs_CL convention so both
+// data sources can be queried together in one workspace.
+//
+// This file assumes the ingested column names match AuditEvent's fields
+// with Sentinel's usual _CL/_s/_d suffixing (TimeGenerated is a standard
+// Sentinel column populated at ingestion time).
+
+// 1. All blocked requests in the last 24 hours, most recent first.
+PromptShieldLogs_CL
+| where TimeGenerated > ago(24h)
+| where action_s == "block"
+| project TimeGenerated, request_id_s, side_s, detector_s, confidence_d, rule_id_s, matched_patterns_s
+| order by TimeGenerated desc
+
+// 2. Detection volume by detector and action, last 7 days -- the
+//    "how noisy is each rule" view you'd use to tune default.yaml.
+// PromptShieldLogs_CL
+// | where TimeGenerated > ago(7d)
+// | summarize count() by detector_s, action_s
+// | order by count_ desc
+
+// 3. Requests where the SAME request_id was flagged on both inbound and
+//    outbound -- the two-sided correlation this proxy is built to catch
+//    (e.g. an obfuscated inbound probe that also produced a leaky
+//    completion), mirroring how RiskWeave's toxic_combinations correlates
+//    two facts rather than reporting them in isolation.
+// PromptShieldLogs_CL
+// | where TimeGenerated > ago(24h) and action_s != "allow"
+// | summarize sides = make_set(side_s), actions = make_set(action_s) by request_id_s
+// | where array_length(sides) == 2
+
+// 4. Alert-worthy: system-prompt-leak flags, which default.yaml treats as
+//    "flag" (log + allow) rather than "block" -- these need a human to
+//    review a sample rather than auto-blocking on a fuzzy-match detector.
+// PromptShieldLogs_CL
+// | where TimeGenerated > ago(24h)
+// | where detector_s == "system_prompt_leak" and action_s == "flag"
+// | project TimeGenerated, request_id_s, confidence_d, matched_patterns_s
